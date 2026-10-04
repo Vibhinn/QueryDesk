@@ -6,25 +6,23 @@ The interface is a chat. Follow-up messages stay in the same conversation, so �
 
 ## Getting started
 
-You’ll need Docker Compose, Node.js with npm, and a model API key. Gemini is the default provider.
+You’ll need Docker Compose and a model API key. Gemini is the default provider. Compose starts both the API and the Vite frontend, so Node.js is only needed if you want to run the frontend outside Docker.
 
 1. Copy `.env.example` to `.env`. Add your Gemini key as `GOOGLE_API_KEY` and replace the example application database password.
-2. Start the database and API services:
+2. Start the complete app in the background:
 
    ```sh
-   docker compose up --build --remove-orphans
+   docker compose up --build -d
    ```
 
-   The analytics database is exposed on port `5432`; the separate application database is on `5433`; the API is on `8000`. On an empty database volume, Compose loads the sample schema and rows from `db/init.sql` and `db/sample_data.sql`.
-3. In another terminal, start the web app:
+   Compose starts both databases, the API, and the frontend. On an empty analytics database volume, it loads the sample schema and rows from `db/init.sql` and `db/sample_data.sql`. The app is available at [http://localhost:5173](http://localhost:5173); the API listens on port `8000`.
+3. To watch service logs:
 
    ```sh
-   cd frontend
-   npm install
-   npm run dev
+   docker compose logs -f
    ```
 
-4. Open [http://localhost:5173](http://localhost:5173) and enter an email address.
+Open the app and enter an email address. To stop the services, run `docker compose down`; this keeps the database volumes and saved chats.
 
 The current sign-in is deliberately simple: an email identifies a chat space, and the API keeps short-lived bearer sessions in memory. It is not proof of identity—anyone who enters someone else’s email can see that email’s chats. Use it only for a trusted demo with non-sensitive data. After an API restart, sign in again with the same email to recover the same saved chats.
 
@@ -45,19 +43,14 @@ Use the model ID your local service expects. From inside Docker, `127.0.0.1` poi
 
 Replace the root `SCHEMA.md` with a description of your database, then restart the API. Keep the format the schema reader understands: a dialect declaration, `### table_name` sections with Markdown column tables, and optional `## Relationships`, `## Business definitions`, and `## Global data rules and caveats` sections. The reader uses those descriptions to find relevant context; it does not inspect the database to fill in missing joins or business meanings. See [Architecture and workflow](docs/architecture.md#schema-reading-and-retrieval) for what is retrieved and how.
 
-For a Vite app hosted at a different address, put its API address in `frontend/.env.local` as `VITE_API_URL`, and add the frontend origin to `CORS_ORIGINS` in the server’s `.env`. For example, with the EC2 hostname used during setup:
+When Compose runs the frontend, set its browser-visible API address in the root `.env` as `VITE_API_URL`, and add the frontend origin to `CORS_ORIGINS`. For example, with the EC2 hostname used during setup:
 
 ```env
-# frontend/.env.local
 VITE_API_URL=http://ec2-13-63-175-127.eu-north-1.compute.amazonaws.com:8000
-```
-
-```env
-# server .env
 CORS_ORIGINS=http://ec2-13-63-175-127.eu-north-1.compute.amazonaws.com:5173
 ```
 
-Restart Vite after changing its environment file. For a public deployment, serve the app over HTTPS and replace the demo email sign-in with real authentication.
+Rebuild/recreate the frontend and API after changing those values with `docker compose up --build -d`. For a public deployment, serve the app over HTTPS and replace the demo email sign-in with real authentication.
 
 If you already have a database volume, the initialization scripts do not run again automatically. To apply the sample rows without removing that volume:
 
