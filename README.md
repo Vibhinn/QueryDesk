@@ -1,42 +1,22 @@
-# Querydesk NL2SQL
+# Querydesk
 
-A local NL2SQL demo built around `SCHEMA.md`. It uses a FastAPI API, a LangGraph server-side pipeline, PostgreSQL, SQLGlot validation, and a React/Vite TypeScript UI.
+Querydesk lets someone ask questions about a database in everyday language and see both the answer and the SQL behind it. The point is not to ask a model to guess at a database: the app reads a `SCHEMA.md`, narrows the relevant context, checks the request, validates the SQL, and only then runs it.
 
-## Pipeline
+The interface is a chat. Follow-up messages stay in the same conversation, so “Show me all customers” followed by “only from California” can be understood as one continuing request. Results appear in a table, can be downloaded as CSV, and can be summarized on demand. Users can leave feedback on an answer.
 
-1. Check whether the request can be answered by this database.
-2. Detect the analytical intent and candidate tables; ask for clarification when needed.
-3. Validate scope against retrieved schema context.
-4. Retrieve relevant table definitions, relationships, business definitions, and global caveats from `SCHEMA.md`.
-5. Generate PostgreSQL SQL.
-6. Parse and restrict SQL to one read-only query, then use a separate model call to check whether it answers the request.
-7. Add a configurable result cap, re-parse the SQL, and ask PostgreSQL for an `EXPLAIN` plan.
-8. Execute in a read-only transaction with a statement timeout.
-9. Render the result as a table. CSV download is created in the browser; **Summarize** calls the model only when clicked.
+## Getting started
 
-## Email identity, conversations, and feedback
+You’ll need Docker Compose, Node.js with npm, and a model API key. Gemini is the default provider.
 
-The app has a lightweight email-only sign-in. The API issues a random bearer token held in process memory and derives a stable user ID from the normalized email. Conversation, message, and feedback rows store that user ID; all chat/history/summary/feedback routes filter by it. The browser stores the bearer token and can sign in again after an API restart to recover the same chats. Sessions expire after 24 hours and are lost when the API process restarts.
-
-This is **not secure authentication**: there is no password or email verification, so anyone who knows an email address can enter it and see that email's chats. Use it only for a trusted demo with non-sensitive data. It also expects one API process because sessions are held in memory.
-
-Conversation data is stored in a PostgreSQL application database, separate from the analytics database. It has three tables: `conversation`, `messages`, and `feedback`; all include the app user ID. The API commits a submitted user message before calling the LLM or analytics database, so a downstream model/database outage does not discard the accepted question. Feedback is attached to assistant messages; downvotes require a comment. Service credentials in `.env.example` are local-development examples only. Set private values before exposing any service beyond localhost.
-
-Recent messages in the selected conversation are passed as context for follow-up questions. If the schema cannot represent a request or its intent is unclear, the assistant asks a follow-up and offers suggestions; SQL generation and execution wait until the request is sufficiently clear. Choosing a suggestion adds it as a new turn in that conversation.
-
-The model's semantic check is a guardrail, not a mathematical proof. SQLGlot checks syntax and AST properties. PostgreSQL `EXPLAIN` checks the query against the live database before execution.
-
-## Run locally
-
-1. Copy `.env.example` to `.env`, set `GOOGLE_API_KEY` to your Gemini API key, and replace the application database password with a private value.
-2. Start the services:
+1. Copy `.env.example` to `.env`. Add your Gemini key as `GOOGLE_API_KEY` and replace the example application database password.
+2. Start the database and API services:
 
    ```sh
    docker compose up --build --remove-orphans
    ```
 
-   On fresh volumes, this creates the sample analytics schema/data and starts the application database. The API listens on `http://localhost:8000`.
-3. Start the web client in another terminal:
+   The analytics database is exposed on port `5432`; the separate application database is on `5433`; the API is on `8000`. On an empty database volume, Compose loads the sample schema and rows from `db/init.sql` and `db/sample_data.sql`.
+3. In another terminal, start the web app:
 
    ```sh
    cd frontend
@@ -44,49 +24,98 @@ The model's semantic check is a guardrail, not a mathematical proof. SQLGlot che
    npm run dev
    ```
 
-   Open `http://localhost:5173` and enter an email address to sign in.
+4. Open [http://localhost:5173](http://localhost:5173) and enter an email address.
 
-The compose stack exposes the analytics database on port `5432` and the application database on port `5433`. Application tables are created automatically when the API starts. The API accepts comma-separated browser origins in `CORS_ORIGINS` (default: `http://localhost:5173`).
+The current sign-in is deliberately simple: an email identifies a chat space, and the API keeps short-lived bearer sessions in memory. It is not proof of identity—anyone who enters someone else’s email can see that email’s chats. Use it only for a trusted demo with non-sensitive data. After an API restart, sign in again with the same email to recover the same saved chats.
 
-To access a Vite frontend on an EC2 host by IP, set `VITE_API_URL=http://<EC2-IP>:8000` in `frontend/.env.local` and `CORS_ORIGINS=http://<EC2-IP>:5173` in the server's `.env`, then restart Vite and the API. Allow ports 5173 and 8000 in the EC2 security group only from trusted IP addresses. This demo login sends bearer tokens over HTTP, so use it only on a trusted network; use HTTPS and real authentication for a public deployment.
+### Using a different model or host
 
-Existing chats stored by the earlier SQLite version are retained in the old Docker volume if it exists, but are not automatically imported. Chats created under Keycloak remain in the PostgreSQL application database, but their old Keycloak subject IDs cannot be automatically mapped to email-derived IDs; they will not appear in the new email-only login unless you migrate that mapping.
+The model connection is configured on the server. Gemini is the default (`MODEL_PROVIDER=google_genai`), using `GOOGLE_API_KEY`. For an OpenAI-compatible local service, configure it like this instead:
 
-The database uses a read-only transaction for both `EXPLAIN` and query execution. The configured row cap defaults to 500 and the statement timeout defaults to 8 seconds. For a real deployment, use a dedicated database role with only `SELECT` privileges as an additional boundary.
+```env
+MODEL_PROVIDER=openai-compatible
+MODEL_NAME=system
+MODEL_BASE_URL=http://host.docker.internal:1976/v1
+MODEL_API_KEY=
+```
 
-If the PostgreSQL volume already existed before the sample data was added, init scripts will not run again automatically. Apply the idempotent seed file without deleting the existing volume:
+Use the model ID your local service expects. From inside Docker, `127.0.0.1` points back to the API container, so use the host name your platform provides (for example, `host.docker.internal` on Docker Desktop). Keys and model settings stay on the server and are not sent to the browser.
+
+### Using another database schema
+
+Replace the root `SCHEMA.md` with a description of your database, then restart the API. Keep the format the schema reader understands: a dialect declaration, `### table_name` sections with Markdown column tables, and optional `## Relationships`, `## Business definitions`, and `## Global data rules and caveats` sections. The reader uses those descriptions to find relevant context; it does not inspect the database to fill in missing joins or business meanings. See [Architecture and workflow](docs/architecture.md#schema-reading-and-retrieval) for what is retrieved and how.
+
+For a Vite app hosted at a different address, put its API address in `frontend/.env.local` as `VITE_API_URL`, and add the frontend origin to `CORS_ORIGINS` in the server’s `.env`. For example, with the EC2 hostname used during setup:
+
+```env
+# frontend/.env.local
+VITE_API_URL=http://ec2-13-63-175-127.eu-north-1.compute.amazonaws.com:8000
+```
+
+```env
+# server .env
+CORS_ORIGINS=http://ec2-13-63-175-127.eu-north-1.compute.amazonaws.com:5173
+```
+
+Restart Vite after changing its environment file. For a public deployment, serve the app over HTTPS and replace the demo email sign-in with real authentication.
+
+If you already have a database volume, the initialization scripts do not run again automatically. To apply the sample rows without removing that volume:
 
 ```sh
 docker compose exec -T db psql -U nl2sql -d nl2sql_demo < db/sample_data.sql
 ```
 
-### Local OpenAI-compatible model endpoint
+## How the pieces fit together
 
-For a model server listening at `http://127.0.0.1:1976/v1/chat/completions`, set:
+The browser handles the chat experience: sending messages, showing tables, downloading CSV, copying SQL, switching themes, and collecting feedback. The FastAPI service owns the decisions that need to be trusted: it derives the current user from the session, loads chat history, runs the LangGraph pipeline, and stores each turn.
 
-```env
-MODEL_PROVIDER=openai-compatible
-MODEL_NAME=<model id accepted by your local server>
-MODEL_API_KEY=
-MODEL_BASE_URL=http://127.0.0.1:1976/v1
+There are two PostgreSQL databases. The analytics database is where generated, read-only SQL runs. The application database holds conversations, messages, and feedback. Keeping those separate means the chat history does not share the analytics database’s tables or credentials.
+
+The model is reached through a small adapter, so the rest of the pipeline does not need to know whether the configured provider is Gemini, Anthropic, or an OpenAI-compatible service. The schema reader follows a similar boundary: it turns `SCHEMA.md` into table descriptions and retrieves the pieces that appear relevant to a question.
+
+```mermaid
+flowchart LR
+    Browser[React and Vite chat] -->|HTTP and bearer session| API[FastAPI]
+    API --> ChatDB[(Application PostgreSQL<br/>chats, messages, feedback)]
+    API --> Graph[LangGraph NL2SQL workflow]
+    Graph --> Schema[Markdown schema reader<br/>SCHEMA.md]
+    Graph --> Model[LLM adapter]
+    Graph --> Safety[SQLGlot validation]
+    Safety --> Analytics[(Analytics PostgreSQL<br/>read-only queries)]
+    Graph --> API
+    API --> Browser
 ```
 
-Run only PostgreSQL in Docker (`docker compose up -d db`), then run FastAPI on your host so its `127.0.0.1` reaches the model server:
+The detailed architecture and graph behavior are in [Architecture and workflow](docs/architecture.md). The prompts sent to the model are collected in [Prompts](docs/prompts.md).
 
-```sh
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+## The LangGraph workflow
+
+Each message moves through a graph with explicit stops. A request that is unrelated to the database ends early. An ambiguous or unsupported request gets a clarification and suggested alternatives instead of SQL. Only a request that passes scope checks reaches SQL generation.
+
+```mermaid
+flowchart TD
+    Start([New message]) --> Check[Check database scope]
+    Check -->|Out of scope or error| Stop1([Return a response])
+    Check -->|In scope| Intent[Resolve intent and follow-up context]
+    Intent -->|Needs clarification| Stop2([Ask a clarifying question])
+    Intent -->|Clear request| Scope[Validate against schema scope]
+    Scope -->|Unsupported or unclear| Stop2
+    Scope -->|Supported| Retrieve[Retrieve relevant schema context]
+    Retrieve --> Generate[Generate one read-only SQL query]
+    Generate --> Validate[Parse SQL and check its meaning]
+    Validate -->|Rejected| Stop3([Return validation error])
+    Validate -->|Accepted| Optimize[Add row cap and run EXPLAIN]
+    Optimize -->|Database rejects plan| Stop4([Return a database error])
+    Optimize -->|Plan accepted| Execute[Execute in read-only transaction]
+    Execute --> Finish([Return rows and SQL])
 ```
 
-The OpenAI SDK requires a non-empty key value to construct its client, so the adapter sends `local-no-key` when a custom compatible endpoint is configured and `MODEL_API_KEY` is blank. The local server must ignore that bearer token. If it rejects any authorization header, it will need a no-auth HTTP adapter instead. Set `MODEL_NAME` to the model identifier expected by the server; if supported, its `/v1/models` endpoint may list it.
+The graph’s nodes and branches are explained in [Architecture and workflow](docs/architecture.md). Prompt wording is documented in [Prompts](docs/prompts.md).
 
-## Model providers
+## A few important limits
 
-Gemini is the default provider (`MODEL_PROVIDER=google_genai`) and uses `GOOGLE_API_KEY`; the default model is `gemini-3.8-flash`. The model name is configurable. The adapter also supports OpenAI-compatible endpoints and Anthropic; other LangChain providers can be enabled by adding the provider integration package and its provider-specific configuration. Keys stay on the server and are never sent to the browser.
+Schema retrieval is lexical: it scores table names, column names, and words in each table description, then includes the strongest matches. This keeps large schemas from being sent wholesale to the model, but a well-written `SCHEMA.md` still matters. It should explain table grain, relationships, business terms, and data caveats. The reader does not inspect the live database to discover those rules.
 
-## Replacing `SCHEMA.md`
+SQLGlot checks that the result is a single read-only query and only refers to documented tables. A separate model call checks whether the query appears to answer the request. That semantic check is a useful guardrail, not a proof. Before execution, the app adds a result cap, asks PostgreSQL to `EXPLAIN` the query, and then runs it in a read-only transaction with a statement timeout.
 
-Set `SCHEMA_PATH` to the new Markdown file. The current reader extracts `### table_name` sections, column tables, `## Relationships`, `## Business definitions`, and `## Global data rules and caveats`. It retrieves table sections based on question terms and explicit table hints. Preserve exact database table and column names. If a schema uses a different Markdown layout, update the reader or provide a normalized schema document; arbitrary prose cannot be parsed reliably without a defined contract.
-
-The demo is configured for PostgreSQL. Changing to a different database dialect also requires a matching SQLAlchemy driver and execution configuration.
+The query result limit defaults to 500 rows and the statement timeout to 8 seconds. For a deployment with real data, use a database role with only `SELECT` privileges, enable HTTPS, and replace the demo sign-in.

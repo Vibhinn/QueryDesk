@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from src.app.ports import SchemaRepositoryInterface
+
 
 @dataclass
 class TableInfo:
@@ -18,7 +20,7 @@ def words(text: str) -> set[str]:
     return {w.lower() for w in re.findall(r"[a-zA-Z][a-zA-Z0-9_]*", text) if len(w) > 1}
 
 
-class SchemaContext:
+class MarkdownSchemaRepository(SchemaRepositoryInterface):
     def __init__(self, path: Path):
         self.path = path
         self.text = path.read_text(encoding="utf-8")
