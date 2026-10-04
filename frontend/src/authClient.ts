@@ -4,7 +4,7 @@ export type SessionUser = {
   preferred_username: string
 }
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const API = import.meta.env.VITE_API_URL ?? ''
 const TOKEN_KEY = 'querydesk-session-token'
 const USER_KEY = 'querydesk-session-user'
 let activeUser: SessionUser | null = null

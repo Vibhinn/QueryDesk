@@ -43,14 +43,7 @@ Use the model ID your local service expects. From inside Docker, `127.0.0.1` poi
 
 Replace the root `SCHEMA.md` with a description of your database, then restart the API. Keep the format the schema reader understands: a dialect declaration, `### table_name` sections with Markdown column tables, and optional `## Relationships`, `## Business definitions`, and `## Global data rules and caveats` sections. The reader uses those descriptions to find relevant context; it does not inspect the database to fill in missing joins or business meanings. See [Architecture and workflow](docs/architecture.md#schema-reading-and-retrieval) for what is retrieved and how.
 
-When Compose runs the frontend, set its browser-visible API address in the root `.env` as `VITE_API_URL`, and add the frontend origin to `CORS_ORIGINS`. For example, with the EC2 hostname used during setup:
-
-```env
-VITE_API_URL=http://ec2-13-63-175-127.eu-north-1.compute.amazonaws.com:8000
-CORS_ORIGINS=http://ec2-13-63-175-127.eu-north-1.compute.amazonaws.com:5173
-```
-
-Rebuild/recreate the frontend and API after changing those values with `docker compose up --build -d`. For a public deployment, serve the app over HTTPS and replace the demo email sign-in with real authentication.
+The frontend sends `/api` requests to Vite, which forwards them to the API service over the private Compose network. This keeps the browser and API request on the same origin, so the Compose setup does not need a CORS origin setting. When using the EC2 hostname from setup, make sure it is allowed in the Vite config. For a public deployment, serve the app over HTTPS and replace the demo email sign-in with real authentication.
 
 If you already have a database volume, the initialization scripts do not run again automatically. To apply the sample rows without removing that volume:
 

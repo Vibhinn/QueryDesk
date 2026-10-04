@@ -32,7 +32,7 @@ type ChatMessage = {
 type ChatDetail = { chat: ChatSummary; messages: ChatMessage[] }
 type ChatTurn = { user_message: ChatMessage; assistant_message: ChatMessage; result: QueryResult }
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const API = import.meta.env.VITE_API_URL ?? ''
 const examples = [
   'Show me all customers',
   'Show monthly revenue for the last 12 months',
