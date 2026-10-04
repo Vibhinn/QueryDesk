@@ -8,7 +8,29 @@ The interface is a chat. Follow-up messages stay in the same conversation, so �
 
 You’ll need Docker Compose and a model API key. Gemini is the default provider. Compose starts both the API and the Vite frontend, so Node.js is only needed if you want to run the frontend outside Docker.
 
-1. Copy `.env.example` to `.env`. Add your Gemini key as `GOOGLE_API_KEY` and replace the example application database password.
+1. Create the environment files from their examples:
+
+   ```sh
+   cp .env.example .env
+   cp frontend/.env.example frontend/.env.local
+   ```
+
+   In the root `.env`, set the model and app database values Compose needs:
+
+   ```env
+   MODEL_PROVIDER=google_genai
+   MODEL_NAME=gemini-3.8-flash
+   GOOGLE_API_KEY=your_gemini_key
+   APP_DB_PASSWORD=choose_a_private_password
+   ```
+
+   The rest of the root example can stay as-is for this Compose setup. In `frontend/.env.local`, leave the API URL blank so requests use the `/api` proxy:
+
+   ```env
+   VITE_API_URL=
+   ```
+
+   Compose supplies the API container address to that proxy. The frontend file is only read when you run Vite directly on your computer; it is not copied into the frontend container.
 2. Start the complete app in the background:
 
    ```sh
@@ -56,6 +78,8 @@ docker compose exec -T db psql -U nl2sql -d nl2sql_demo < db/sample_data.sql
 The browser handles the chat experience: sending messages, showing tables, downloading CSV, copying SQL, switching themes, and collecting feedback. The FastAPI service owns the decisions that need to be trusted: it derives the current user from the session, loads chat history, runs the LangGraph pipeline, and stores each turn.
 
 There are two PostgreSQL databases. The analytics database is where generated, read-only SQL runs. The application database holds conversations, messages, and feedback. Keeping those separate means the chat history does not share the analytics database’s tables or credentials.
+
+The current demo analytics schema is a small customer and order database. Its tables, business definitions, and example relationships are described in [The database behind the demo](docs/database.md), including a relationship diagram. That page also explains the separate tables used to save chats and feedback.
 
 The model is reached through a small adapter, so the rest of the pipeline does not need to know whether the configured provider is Gemini, Anthropic, or an OpenAI-compatible service. The schema reader follows a similar boundary: it turns `SCHEMA.md` into table descriptions and retrieves the pieces that appear relevant to a question.
 
