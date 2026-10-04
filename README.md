@@ -1,8 +1,8 @@
 # Querydesk
 
-Querydesk lets someone ask questions about a database in everyday language and see both the answer and the SQL behind it. The point is not to ask a model to guess at a database: the app reads a `SCHEMA.md`, narrows the relevant context, checks the request, validates the SQL, and only then runs it.
+Querydesk lets someone ask questions about a database in everyday language. With this system, you can see both the answer and the SQL behind it. The point is not to ask a model to guess at a database: the app reads a `SCHEMA.md`, narrows the relevant context, checks the request, validates the SQL, and only then runs it.
 
-The interface is a chat. Follow-up messages stay in the same conversation, so “Show me all customers” followed by “only from California” can be understood as one continuing request. Results appear in a table, can be downloaded as CSV, and can be summarized on demand. Users can leave feedback on an answer.
+We have implemented a chat UI for interacting with the system. The system is smart enough to maintain a context of the entire chat and know what is the next question about. Results appear in a table, can be downloaded as CSV, and can be summarized on demand. Users can leave feedback on an answer.
 
 ## Getting started
 
@@ -20,7 +20,7 @@ You’ll need Docker Compose and a model API key. Gemini is the default provider
    ```env
    MODEL_PROVIDER=google_genai
    MODEL_NAME=gemini-3.8-flash
-   GOOGLE_API_KEY=your_gemini_key
+   GOOGLE_API_KEY=<your_gemini_key>
    APP_DB_PASSWORD=choose_a_private_password
    ```
 
@@ -30,7 +30,6 @@ You’ll need Docker Compose and a model API key. Gemini is the default provider
    VITE_API_URL=
    ```
 
-   Compose supplies the API container address to that proxy. The frontend file is only read when you run Vite directly on your computer; it is not copied into the frontend container.
 2. Start the complete app in the background:
 
    ```sh
@@ -38,11 +37,6 @@ You’ll need Docker Compose and a model API key. Gemini is the default provider
    ```
 
    Compose starts both databases, the API, and the frontend. On an empty analytics database volume, it loads the sample schema and rows from `db/init.sql` and `db/sample_data.sql`. The app is available at [http://localhost:5173](http://localhost:5173); the API listens on port `8000`.
-3. To watch service logs:
-
-   ```sh
-   docker compose logs -f
-   ```
 
 Open the app and enter an email address. To stop the services, run `docker compose down`; this keeps the database volumes and saved chats.
 
@@ -65,21 +59,18 @@ Use the model ID your local service expects. From inside Docker, `127.0.0.1` poi
 
 Replace the root `SCHEMA.md` with a description of your database, then restart the API. Keep the format the schema reader understands: a dialect declaration, `### table_name` sections with Markdown column tables, and optional `## Relationships`, `## Business definitions`, and `## Global data rules and caveats` sections. The reader uses those descriptions to find relevant context; it does not inspect the database to fill in missing joins or business meanings. See [Architecture and workflow](docs/architecture.md#schema-reading-and-retrieval) for what is retrieved and how.
 
-The frontend sends `/api` requests to Vite, which forwards them to the API service over the private Compose network. This keeps the browser and API request on the same origin, so the Compose setup does not need a CORS origin setting. When using the EC2 hostname from setup, make sure it is allowed in the Vite config. For a public deployment, serve the app over HTTPS and replace the demo email sign-in with real authentication.
 
-If you already have a database volume, the initialization scripts do not run again automatically. To apply the sample rows without removing that volume:
+## QueryDesk as a package
 
-```sh
-docker compose exec -T db psql -U nl2sql -d nl2sql_demo < db/sample_data.sql
-```
+The frontend manages chat windows, feedback collection and rendering server output in a tabular form.
 
-## How the pieces fit together
+There are two PostgreSQL databases. The analytics database (the sample database for which this NL2SQL system is built) is where generated SQL runs. The second database holds conversations, messages, and feedback. Keeping those separate means the chat history does not share the analytics database’s tables or credentials.
 
-The browser handles the chat experience: sending messages, showing tables, downloading CSV, copying SQL, switching themes, and collecting feedback. The FastAPI service owns the decisions that need to be trusted: it derives the current user from the session, loads chat history, runs the LangGraph pipeline, and stores each turn.
-
-There are two PostgreSQL databases. The analytics database is where generated, read-only SQL runs. The application database holds conversations, messages, and feedback. Keeping those separate means the chat history does not share the analytics database’s tables or credentials.
+## The sample database used
 
 The current demo analytics schema is a small customer and order database. Its tables, business definitions, and example relationships are described in [The database behind the demo](docs/database.md), including a relationship diagram. That page also explains the separate tables used to save chats and feedback.
+
+## Code Flow
 
 The model is reached through a small adapter, so the rest of the pipeline does not need to know whether the configured provider is Gemini, Anthropic, or an OpenAI-compatible service. The schema reader follows a similar boundary: it turns `SCHEMA.md` into table descriptions and retrieves the pieces that appear relevant to a question.
 
