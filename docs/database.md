@@ -1,10 +1,10 @@
 # The database behind the demo
 
-Querydesk currently connects to two PostgreSQL databases. They serve different purposes, and generated NL2SQL queries run only against the analytics database.
+Querydesk currently runs for one standard customer analytics PostgreSQL database.
 
 ## Analytics data: customers and orders
 
-The demo analytics database is named `nl2sql_demo` and uses PostgreSQL. It models a straightforward sales workflow: customers place orders, and each order can contain multiple product line items. The sample tables are created by `db/init.sql`; example data is loaded from `db/sample_data.sql` when Docker initializes a fresh database volume.
+The demo analytics database is named `nl2sql_demo` and uses PostgreSQL. It models a straightforward sales workflow: customers place orders, and each order can contain multiple product line items. 
 
 ```mermaid
 erDiagram
@@ -54,6 +54,8 @@ The schema is deliberately small, but several business rules change what a corre
 
 These definitions live in the root `SCHEMA.md`. The model uses them when writing SQL, and they help the system ask for clarification when a request cannot be represented by the available columns.
 
+For a fuller explanation of retrieval and the safeguards before execution, see [Architecture and workflow](architecture.md).
+
 ## Chat and feedback storage
 
 The second PostgreSQL database is `querydesk_app`. It is for the application, not for analytics. The API creates these tables on startup:
@@ -90,12 +92,4 @@ erDiagram
     }
 ```
 
-Each conversation belongs to a user. Messages are attached to a conversation and carry the same `user_id`; feedback belongs to an assistant message and its user. The database enforces those ownership relationships with composite foreign keys. A down-vote requires a comment, while an up-vote can be left without one. Query results and generated SQL are kept in the message's JSON payload so the chat can be restored later.
-
-The current sign-in asks for an email but does not verify it. The app derives a stable user ID from the normalized email and stores bearer sessions in memory. Chat rows persist in `querydesk_app`, but the sign-in is only suitable for a trusted demo: someone can enter another person's email and access that person's chats.
-
-## What “NL2SQL” means here
-
-NL2SQL is the path from an everyday-language question to a database query. For example, a person might ask, “Which product categories sold the most units last quarter?” Querydesk checks that the request concerns this database, retrieves the relevant table and business definitions from `SCHEMA.md`, asks the configured model to write SQL, validates that SQL, and only then runs it against `nl2sql_demo`. The result comes back as a table with the SQL shown alongside it.
-
-The application database is outside that path. The model is not given access to chat tables, and user questions cannot query conversations or feedback. For a fuller explanation of retrieval and the safeguards before execution, see [Architecture and workflow](architecture.md).
+Each conversation belongs to a user. Messages are attached to a conversation and carry the same `user_id`; feedback belongs to an assistant message and its user.

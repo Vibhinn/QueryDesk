@@ -4,9 +4,19 @@ Querydesk is built around a simple idea: let a model interpret a question, but k
 
 ## The request from browser to database
 
-The React/Vite app sends each turn to FastAPI with a bearer session. The API gets the user identity from that session, loads that user’s recent messages, and invokes the query pipeline. It stores the user message before the model or database work starts, then stores the assistant response and query result. This means an accepted question remains in chat history even if a later model or database call fails.
-
-The pipeline is assembled as a LangGraph `StateGraph`. Its state carries the current wording, a standalone interpretation of the question, recent history, intent, selected scope, schema context, generated SQL, validation status, and—after execution—the returned columns and rows. Each node returns updates to that shared state, including a list of stages that the UI can show.
+- The React/Vite app sends each turn to FastAPI with a bearer session. 
+- The API gets the user identity from that session, loads that user’s recent messages, and invokes the query pipeline. 
+- The pipeline is assembled as a LangGraph `StateGraph`. Its state carries 
+  - the current wording
+  - standalone interpretation of the question
+  - recent history
+  - intent
+  - selected scope
+  - schema context
+  - generated SQL
+  - validation status
+  - returned columns and rows
+- Each node returns updates to that shared state, including a list of stages that the UI can show.
 
 ```mermaid
 flowchart LR
@@ -57,7 +67,7 @@ The backend defines interfaces for sessions, chat storage, the model, schema acc
 
 Any check that fails ends the path before execution. Errors are returned as chat responses rather than allowing an invalid query to continue through later graph steps.
 
-## Schema reading and retrieval
+## Schema Reading and Retrieval
 
 `SCHEMA.md` is the contract between the database and the model. The reader expects a dialect declaration, table sections headed by `### table_name`, Markdown column tables, and optional sections for relationships, business definitions, and global rules. Table purpose and row grain are useful context even though the SQL still has to use the real column names.
 
@@ -65,19 +75,19 @@ Retrieval uses word overlap, with extra weight for explicit table hints and colu
 
 This is a lightweight retrieval method, not database introspection or embedding search. It scales better than pasting the entire schema into every prompt, but descriptions and exact identifiers in `SCHEMA.md` need to be accurate. The SQL validator uses the table names in that file as an allowlist; it does not independently discover missing business rules.
 
-## Model boundary and prompts
+## Model Boundary and Prompts
 
 Every model call goes through one configured adapter. The adapter supports Gemini, Anthropic, OpenAI-compatible chat APIs, and LangChain providers that have their integration package installed. Keys stay on the server. Classification and validation calls ask for JSON; SQL generation asks for SQL only. The exact system instructions and a description of the user context sent with each call are in [Prompts](prompts.md).
 
 The semantic SQL check is a second model judgment, not a formal equivalence checker. SQLGlot can establish that a query parses and obeys structural rules; it cannot prove that a model understood “revenue,” “active customer,” or a time phrase the way the user intended. That is why the schema should explain those terms and why ambiguous requests pause for clarification.
 
-## Chat ownership and persistence
+## Chat Ownership and Persistence
 
 The application database stores `conversation`, `messages`, and `feedback`. Each row has a `user_id`; composite foreign keys also make sure a message and its feedback belong to the same user as their parent record. The API scopes reads and writes by the ID in the current session, not an ID supplied with a chat request.
 
 The current email sign-in is only a demo identity mechanism. A normalized email maps to a stable user ID, while random bearer tokens are kept in a process-local session store for 24 hours. The messages and chats survive restarts in PostgreSQL, but sessions do not. There is no password or email verification, so an email address is not proof of identity. Do not put sensitive or production data behind this sign-in.
 
-## Query boundaries
+## Query Validation Pipeline
 
 Three checks work together before SQL runs: SQLGlot enforces query shape and known tables, the semantic model call checks whether the query matches the request, and PostgreSQL `EXPLAIN` checks the query against the live database. Execution is read-only and time-limited, and the returned rows are capped.
 

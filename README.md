@@ -1,6 +1,6 @@
 # Querydesk
 
-Querydesk lets someone ask questions about a database in everyday language. With this system, you can see both the answer and the SQL behind it. The point is not to ask a model to guess at a database: the app reads a `SCHEMA.md`, narrows the relevant context, checks the request, validates the SQL, and only then runs it.
+Querydesk lets anyone ask questions about a database in everyday language. With this system, you can see both the answer and the SQL behind it. The point is not to ask a model to guess at a database: the app reads a `SCHEMA.md`, narrows the relevant context, checks the request, validates the SQL, and only then runs it.
 
 We have implemented a chat UI for interacting with the system. The system is smart enough to maintain a context of the entire chat and know what is the next question about. Results appear in a table, can be downloaded as CSV, and can be summarized on demand. Users can leave feedback on an answer.
 
