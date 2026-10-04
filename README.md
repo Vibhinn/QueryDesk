@@ -14,11 +14,13 @@ A local NL2SQL demo built around `SCHEMA.md`. It uses a FastAPI API, a LangGraph
 8. Execute in a read-only transaction with a statement timeout.
 9. Render the result as a table. CSV download is created in the browser; **Summarize** calls the model only when clicked.
 
-## Accounts, conversations, and feedback
+## Email identity, conversations, and feedback
 
-The React app signs users in through Keycloak using the OIDC Authorization Code flow with PKCE. The development realm allows self-registration using an email address and password; email is the username. This is not passwordless email-only login. Email verification and password reset are disabled in the local realm because no SMTP server is configured; set up SMTP and enable those flows before production. The API verifies each bearer access token and derives the user's ID from its signed `sub` claim. It never trusts a user ID sent by the browser. Chat list, history, summary, and feedback endpoints enforce conversation ownership using that identity.
+The app has a lightweight email-only sign-in. The API issues a random bearer token held in process memory and derives a stable user ID from the normalized email. Conversation, message, and feedback rows store that user ID; all chat/history/summary/feedback routes filter by it. The browser stores the bearer token and can sign in again after an API restart to recover the same chats. Sessions expire after 24 hours and are lost when the API process restarts.
 
-Conversation data is stored in a PostgreSQL application database, separate from the analytics database. It has three tables: `conversation`, `messages`, and `feedback`; all include the Keycloak user ID. The API commits a submitted user message before calling the LLM or analytics database, so a downstream model/database outage does not discard the accepted question. Feedback is attached to assistant messages; downvotes require a comment. These service credentials and Keycloak's admin credentials in `.env.example` are local-development examples only. Set strong private values before exposing any service beyond localhost.
+This is **not secure authentication**: there is no password or email verification, so anyone who knows an email address can enter it and see that email's chats. Use it only for a trusted demo with non-sensitive data. It also expects one API process because sessions are held in memory.
+
+Conversation data is stored in a PostgreSQL application database, separate from the analytics database. It has three tables: `conversation`, `messages`, and `feedback`; all include the app user ID. The API commits a submitted user message before calling the LLM or analytics database, so a downstream model/database outage does not discard the accepted question. Feedback is attached to assistant messages; downvotes require a comment. Service credentials in `.env.example` are local-development examples only. Set private values before exposing any service beyond localhost.
 
 Recent messages in the selected conversation are passed as context for follow-up questions. If the schema cannot represent a request or its intent is unclear, the assistant asks a follow-up and offers suggestions; SQL generation and execution wait until the request is sufficiently clear. Choosing a suggestion adds it as a new turn in that conversation.
 
@@ -26,14 +28,14 @@ The model's semantic check is a guardrail, not a mathematical proof. SQLGlot che
 
 ## Run locally
 
-1. Copy `.env.example` to `.env`, set `GOOGLE_API_KEY` to your Gemini API key, and replace all local-development passwords with private values.
+1. Copy `.env.example` to `.env`, set `GOOGLE_API_KEY` to your Gemini API key, and replace the application database password with a private value.
 2. Start the services:
 
    ```sh
-   docker compose up --build
+   docker compose up --build --remove-orphans
    ```
 
-   On fresh volumes, this creates the sample analytics schema/data and starts the application database plus Keycloak. The API listens on `http://localhost:8000`; Keycloak is at `http://localhost:8081` and its admin console is available there. The development admin credentials come from `KEYCLOAK_ADMIN_USERNAME` and `KEYCLOAK_ADMIN_PASSWORD` in `.env`.
+   On fresh volumes, this creates the sample analytics schema/data and starts the application database. The API listens on `http://localhost:8000`.
 3. Start the web client in another terminal:
 
    ```sh
@@ -42,15 +44,13 @@ The model's semantic check is a guardrail, not a mathematical proof. SQLGlot che
    npm run dev
    ```
 
-   Open `http://localhost:5173`. Keycloak redirects you to sign in; use **Register** to create an account with email and password if needed. The imported `querydesk` realm and `querydesk-web` client are configured for this local URL.
+   Open `http://localhost:5173` and enter an email address to sign in.
 
-The compose stack exposes the analytics database on port `5432` and the application database on port `5433`. Keycloak uses its own separate PostgreSQL database, which is not exposed on the host. Application tables are created automatically when the API starts. Do not use the example credentials outside local development.
+The compose stack exposes the analytics database on port `5432` and the application database on port `5433`. Application tables are created automatically when the API starts. The API accepts comma-separated browser origins in `CORS_ORIGINS` (default: `http://localhost:5173`).
 
-The API requires the `sub` user identifier in access tokens. The `querydesk-api-audience` client scope includes a **Subject (sub)** mapper that adds it to regular and lightweight access tokens. If Keycloak was initialized before this mapper was added, realm import will not update the existing realm: in the admin console, open **Client scopes** → `querydesk-api-audience` → **Mappers** → **Add mapper** → **By configuration** → **Subject (sub)**. Enable **Add to access token** and, if shown, **Add to lightweight access token**, then save. Keep the existing realm and database; do not delete the Keycloak volume. Sign out and sign in again to receive a token with `sub`.
+To access a Vite frontend on an EC2 host by IP, set `VITE_API_URL=http://<EC2-IP>:8000` in `frontend/.env.local` and `CORS_ORIGINS=http://<EC2-IP>:5173` in the server's `.env`, then restart Vite and the API. Allow ports 5173 and 8000 in the EC2 security group only from trusted IP addresses. This demo login sends bearer tokens over HTTP, so use it only on a trusted network; use HTTPS and real authentication for a public deployment.
 
-For a Vite host setup, the Keycloak URL, realm, client ID, and API URL default to the values above. Override them in `frontend/.env.local` if needed. If running FastAPI directly on the host instead of in Compose, set `KEYCLOAK_JWKS_URL=http://localhost:8081/realms/querydesk/protocol/openid-connect/certs` in the backend environment; the Compose default uses the internal Docker hostname.
-
-Existing chats stored by the earlier SQLite version are retained in the old Docker volume if it exists, but are not automatically imported: those rows have no authenticated owner. The PostgreSQL application database starts a new user-scoped history.
+Existing chats stored by the earlier SQLite version are retained in the old Docker volume if it exists, but are not automatically imported. Chats created under Keycloak remain in the PostgreSQL application database, but their old Keycloak subject IDs cannot be automatically mapped to email-derived IDs; they will not appear in the new email-only login unless you migrate that mapping.
 
 The database uses a read-only transaction for both `EXPLAIN` and query execution. The configured row cap defaults to 500 and the statement timeout defaults to 8 seconds. For a real deployment, use a dedicated database role with only `SELECT` privileges as an additional boundary.
 

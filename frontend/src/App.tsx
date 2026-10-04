@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
-import { authenticatedFetch, currentUser, logout } from './authClient'
+import { authenticatedFetch, currentUser, login, logout, SessionUser } from './authClient'
 
 type QueryResult = {
   status: string
@@ -64,14 +64,33 @@ export default function App() {
   const [copiedSqlId, setCopiedSqlId] = useState<string | null>(null)
   const [savingFeedbackId, setSavingFeedbackId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [user, setUser] = useState<SessionUser | null>(() => currentUser())
+  const [loginEmail, setLoginEmail] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('querydesk-theme') === 'dark')
   const endRef = useRef<HTMLDivElement>(null)
-  const initialized = useRef(false)
+  const initializedForUser = useRef<string | null>(null)
 
   useEffect(() => {
-    if (initialized.current) return
-    initialized.current = true
+    if (!user) {
+      initializedForUser.current = null
+      setChats([])
+      setActiveChatId(null)
+      setMessages([])
+      return
+    }
+    if (initializedForUser.current === user.user_id) return
+    initializedForUser.current = user.user_id
     void initializeChats()
+  }, [user?.user_id])
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      initializedForUser.current = null
+      setUser(null)
+      setError('Your demo session ended. Enter your email to sign in again.')
+    }
+    window.addEventListener('querydesk-session-expired', handleExpiredSession)
+    return () => window.removeEventListener('querydesk-session-expired', handleExpiredSession)
   }, [])
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages.length, loading, activeChatId])
 
@@ -81,6 +100,35 @@ export default function App() {
       localStorage.setItem('querydesk-theme', next ? 'dark' : 'light')
       return next
     })
+  }
+
+  async function signIn(event: FormEvent) {
+    event.preventDefault()
+    setSigningIn(true)
+    setError('')
+    try {
+      const signedInUser = await login(loginEmail)
+      setUser(signedInUser)
+      setLoginEmail('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not sign in.')
+    } finally {
+      setSigningIn(false)
+    }
+  }
+
+  async function signOut() {
+    initializedForUser.current = null
+    setUser(null)
+    setChats([])
+    setActiveChatId(null)
+    setMessages([])
+    setError('')
+    try {
+      await logout()
+    } catch {
+      // Clear the browser session even if the API is currently unavailable.
+    }
   }
 
   async function initializeChats() {
@@ -141,7 +189,7 @@ export default function App() {
       if (!chatId) return
     }
     const pendingMessage: ChatMessage = {
-      id: `pending-${Date.now()}`, chat_id: chatId, user_id: currentUser().userId, role: 'user', content: text.trim(), payload: {} as QueryResult, created_at: new Date().toISOString(),
+      id: `pending-${Date.now()}`, chat_id: chatId, user_id: user?.user_id ?? '', role: 'user', content: text.trim(), payload: {} as QueryResult, created_at: new Date().toISOString(),
     }
     setMessages(current => [...current, pendingMessage])
     setQuestion('')
@@ -231,7 +279,6 @@ export default function App() {
   }
 
   const activeChat = chats.find(chat => chat.id === activeChatId)
-  const user = currentUser()
   const hasConversation = messages.length > 0
   const csvFor = (result: QueryResult) => [
     result.columns.map(csvValue).join(','),
@@ -248,6 +295,22 @@ export default function App() {
     anchor.download = 'query-results.csv'
     anchor.click()
     URL.revokeObjectURL(url)
+  }
+
+  if (!user) {
+    return <main className={`login-screen${darkMode ? ' dark' : ''}`}>
+      <form className="login-card" onSubmit={event => void signIn(event)}>
+        <a className="brand" href="#" aria-label="Querydesk home"><span className="brand-mark">q</span><span className="brand-name">querydesk</span></a>
+        <div className="eyebrow"><span className="sparkle">✳</span> YOUR DATA, IN PLAIN ENGLISH</div>
+        <h1>Welcome back</h1>
+        <p>Enter your email to open your private chat space.</p>
+        <label htmlFor="login-email">Email address</label>
+        <input id="login-email" type="email" autoComplete="email" required maxLength={320} value={loginEmail} onChange={event => setLoginEmail(event.target.value)} placeholder="you@example.com" />
+        {error && <div className="login-error" role="alert">{error}</div>}
+        <button className="login-submit" type="submit" disabled={signingIn || !loginEmail.trim()}>{signingIn ? 'Signing in…' : 'Continue'}</button>
+        <small>This demo uses your email as an identity label. No password or email verification is required.</small>
+      </form>
+    </main>
   }
 
   return (
@@ -267,7 +330,7 @@ export default function App() {
       <main className="main-panel">
         <header className="topbar">
           <div className="breadcrumb"><span>Chats</span><span className="breadcrumb-slash">/</span><strong>{activeChat?.title ?? 'New chat'}</strong></div>
-          <div className="topbar-right"><span className="read-only-badge"><span/> READ ONLY</span><span className="identity-email" title={user.email}>{user.email}</span><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${darkMode ? 'light' : 'dark'} mode`} title={`Switch to ${darkMode ? 'light' : 'dark'} mode`}>{darkMode ? '☀' : '☾'}<span>{darkMode ? 'Light' : 'Dark'}</span></button><button className="logout-button" onClick={logout}>Sign out</button><span className="avatar" title={user.email}>{(user.name[0] || 'U').toUpperCase()}</span></div>
+          <div className="topbar-right"><span className="read-only-badge"><span/> READ ONLY</span><span className="identity-email" title={user.email}>{user.email}</span><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${darkMode ? 'light' : 'dark'} mode`} title={`Switch to ${darkMode ? 'light' : 'dark'} mode`}>{darkMode ? '☀' : '☾'}<span>{darkMode ? 'Light' : 'Dark'}</span></button><button className="logout-button" onClick={() => void signOut()}>Sign out</button><span className="avatar" title={user.email}>{(user.preferred_username[0] || 'U').toUpperCase()}</span></div>
         </header>
 
         <section className={`conversation ${hasConversation ? 'has-messages' : 'welcome-conversation'}`}>

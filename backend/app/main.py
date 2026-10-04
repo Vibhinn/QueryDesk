@@ -1,11 +1,11 @@
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 
 from .chat_store import ChatStore
-from .auth import AuthenticatedUser, get_current_user
+from .auth import AuthenticatedUser, create_session, get_current_user, revoke_session
 from .config import get_settings
 from .llm import get_chat_model
 from .models import (
@@ -14,6 +14,7 @@ from .models import (
     ChatMessage,
     ChatSummary,
     ChatTurnResponse,
+    EmailLoginRequest,
     FeedbackRequest,
     MessageFeedback,
     QueryRequest,
@@ -28,7 +29,7 @@ settings = get_settings()
 app = FastAPI(title="Schema-grounded NL2SQL", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Authorization"],
@@ -106,6 +107,27 @@ def health():
         "chat_store_loaded": chat_store is not None,
         "error": startup_error or chat_store_error,
     }
+
+
+@app.post("/api/auth/login")
+def login(request: EmailLoginRequest):
+    token, user = create_session(request.email)
+    return {"access_token": token, "token_type": "bearer", "user": user}
+
+
+@app.get("/api/auth/me")
+def current_session(user: AuthenticatedUser = Depends(get_current_user)):
+    return user
+
+
+@app.post("/api/auth/logout", status_code=204)
+def logout(
+    authorization: str | None = Header(default=None),
+    _user: AuthenticatedUser = Depends(get_current_user),
+):
+    if authorization:
+        revoke_session(authorization.partition(" ")[2])
+    return Response(status_code=204)
 
 
 @app.post("/api/query", response_model=QueryResponse)

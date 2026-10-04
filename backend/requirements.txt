@@ -4,7 +4,6 @@ pydantic-settings>=2.6,<3
 sqlglot>=26,<30
 sqlalchemy>=2.0,<3
 psycopg[binary]>=3.2,<4
-PyJWT[crypto]>=2.10,<3
 langgraph>=0.2,<2
 langchain>=0.3,<2
 langchain-core>=0.3,<2

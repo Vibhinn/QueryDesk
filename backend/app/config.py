@@ -22,9 +22,7 @@ class Settings(BaseSettings):
     model_temperature: float = 0.0
     max_result_rows: int = Field(default=500, ge=1, le=10000)
     query_timeout_ms: int = Field(default=8000, ge=100, le=120000)
-    keycloak_issuer: str = "http://localhost:8081/realms/querydesk"
-    keycloak_jwks_url: str = "http://keycloak:8080/realms/querydesk/protocol/openid-connect/certs"
-    keycloak_audience: str = "querydesk-api"
+    cors_origins: str = "http://localhost:5173"
 
 
 @lru_cache
