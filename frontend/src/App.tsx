@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
+import { authenticatedFetch, currentUser, logout } from './authClient'
 
 type QueryResult = {
   status: string
@@ -16,14 +17,17 @@ type QueryResult = {
   summary?: string
 }
 
-type ChatSummary = { id: string; title: string; created_at: string; updated_at: string }
+type ChatSummary = { id: string; user_id: string; title: string; created_at: string; updated_at: string }
+type MessageFeedback = { rating: 'up' | 'down'; comment?: string | null }
 type ChatMessage = {
   id: string
   chat_id: string
+  user_id: string
   role: 'user' | 'assistant'
   content: string
   payload: QueryResult
   created_at: string
+  feedback?: MessageFeedback | null
 }
 type ChatDetail = { chat: ChatSummary; messages: ChatMessage[] }
 type ChatTurn = { user_message: ChatMessage; assistant_message: ChatMessage; result: QueryResult }
@@ -40,6 +44,16 @@ function csvValue(value: unknown): string {
   return `"${raw.replaceAll('"', '""')}"`
 }
 
+async function apiError(response: Response, fallback: string): Promise<Error> {
+  const body = await response.json().catch(() => ({})) as { detail?: unknown }
+  if (typeof body.detail === 'string' && body.detail.trim()) return new Error(body.detail)
+  if (Array.isArray(body.detail)) {
+    const messages = body.detail.map(item => typeof item?.msg === 'string' ? item.msg : '').filter(Boolean)
+    if (messages.length) return new Error(messages.join(' '))
+  }
+  return new Error(`${fallback} (HTTP ${response.status}).`)
+}
+
 export default function App() {
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
@@ -48,6 +62,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [summarizingId, setSummarizingId] = useState<string | null>(null)
   const [copiedSqlId, setCopiedSqlId] = useState<string | null>(null)
+  const [savingFeedbackId, setSavingFeedbackId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('querydesk-theme') === 'dark')
   const endRef = useRef<HTMLDivElement>(null)
@@ -70,8 +85,8 @@ export default function App() {
 
   async function initializeChats() {
     try {
-      const response = await fetch(`${API}/api/chats`)
-      if (!response.ok) throw new Error('Could not load chats.')
+      const response = await authenticatedFetch(`${API}/api/chats`)
+      if (!response.ok) throw await apiError(response, 'Could not load chats')
       const data = await response.json() as ChatSummary[]
       setChats(data)
       if (data.length) await selectChat(data[0].id)
@@ -81,22 +96,24 @@ export default function App() {
     }
   }
 
-  async function createChat() {
-    if (loading) return
+  async function createChat(): Promise<string | null> {
+    if (loading) return null
     setError('')
     try {
-      const response = await fetch(`${API}/api/chats`, {
+      const response = await authenticatedFetch(`${API}/api/chats`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
       })
-      const data = await response.json() as ChatSummary
-      if (!response.ok) throw new Error((data as unknown as { detail?: string }).detail ?? 'Could not create a chat.')
+      const data = await response.json().catch(() => ({})) as ChatSummary & { detail?: string }
+      if (!response.ok) throw new Error(data.detail ?? `Could not create a chat (HTTP ${response.status}).`)
       setChats(current => [data, ...current.filter(chat => chat.id !== data.id)])
       setActiveChatId(data.id)
       setMessages([])
       setQuestion('')
       setError('')
+      return data.id
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create a chat.')
+      return null
     }
   }
 
@@ -104,9 +121,9 @@ export default function App() {
     if (loading) return
     setError('')
     try {
-      const response = await fetch(`${API}/api/chats/${chatId}`)
+      const response = await authenticatedFetch(`${API}/api/chats/${chatId}`)
       const data = await response.json() as ChatDetail & { detail?: string }
-      if (!response.ok) throw new Error(data.detail ?? 'Could not open this chat.')
+      if (!response.ok) throw new Error(data.detail ?? `Could not open this chat (HTTP ${response.status}).`)
       setActiveChatId(chatId)
       setMessages(data.messages)
       setQuestion('')
@@ -118,24 +135,24 @@ export default function App() {
   async function sendQuestion(text = question, event?: FormEvent) {
     event?.preventDefault()
     if (!text.trim() || loading) return
-    if (!activeChatId) {
-      setError('Create a chat before sending a question.')
-      return
+    let chatId = activeChatId
+    if (!chatId) {
+      chatId = await createChat()
+      if (!chatId) return
     }
-    const chatId = activeChatId
     const pendingMessage: ChatMessage = {
-      id: `pending-${Date.now()}`, chat_id: chatId, role: 'user', content: text.trim(), payload: {} as QueryResult, created_at: new Date().toISOString(),
+      id: `pending-${Date.now()}`, chat_id: chatId, user_id: currentUser().userId, role: 'user', content: text.trim(), payload: {} as QueryResult, created_at: new Date().toISOString(),
     }
     setMessages(current => [...current, pendingMessage])
     setQuestion('')
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${API}/api/chats/${chatId}/query`, {
+      const response = await authenticatedFetch(`${API}/api/chats/${chatId}/query`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: text.trim() }),
       })
       const data = await response.json() as ChatTurn & { detail?: string }
-      if (!response.ok) throw new Error(data.detail ?? 'Could not process this message.')
+      if (!response.ok) throw new Error(data.detail ?? `Could not process this message (HTTP ${response.status}).`)
       setMessages(current => [...current.filter(message => message.id !== pendingMessage.id), data.user_message, data.assistant_message])
       setChats(current => current.map(chat => chat.id === chatId
         ? { ...chat, title: chat.title === 'New chat' ? text.trim().slice(0, 60) : chat.title, updated_at: new Date().toISOString() }
@@ -155,9 +172,9 @@ export default function App() {
     setSummarizingId(message.id)
     setError('')
     try {
-      const response = await fetch(`${API}/api/chats/${activeChatId}/messages/${message.id}/summarize`, { method: 'POST' })
+      const response = await authenticatedFetch(`${API}/api/chats/${activeChatId}/messages/${message.id}/summarize`, { method: 'POST' })
       const data = await response.json() as { summary?: string; detail?: string }
-      if (!response.ok) throw new Error(data.detail ?? 'Could not summarize this result.')
+      if (!response.ok) throw new Error(data.detail ?? `Could not summarize this result (HTTP ${response.status}).`)
       setMessages(current => current.map(item => item.id === message.id
         ? { ...item, payload: { ...item.payload, summary: data.summary } }
         : item))
@@ -192,7 +209,29 @@ export default function App() {
     }
   }
 
+  async function submitFeedback(message: ChatMessage, rating: 'up' | 'down', comment?: string): Promise<boolean> {
+    setSavingFeedbackId(message.id)
+    setError('')
+    try {
+      const response = await authenticatedFetch(`${API}/api/chats/${message.chat_id}/messages/${message.id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating, comment }),
+      })
+      const data = await response.json() as MessageFeedback & { detail?: string }
+      if (!response.ok) throw new Error(data.detail ?? 'Could not save feedback.')
+      setMessages(current => current.map(item => item.id === message.id ? { ...item, feedback: data } : item))
+      return true
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save feedback.')
+      return false
+    } finally {
+      setSavingFeedbackId(null)
+    }
+  }
+
   const activeChat = chats.find(chat => chat.id === activeChatId)
+  const user = currentUser()
   const hasConversation = messages.length > 0
   const csvFor = (result: QueryResult) => [
     result.columns.map(csvValue).join(','),
@@ -228,7 +267,7 @@ export default function App() {
       <main className="main-panel">
         <header className="topbar">
           <div className="breadcrumb"><span>Chats</span><span className="breadcrumb-slash">/</span><strong>{activeChat?.title ?? 'New chat'}</strong></div>
-          <div className="topbar-right"><span className="read-only-badge"><span/> READ ONLY</span><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${darkMode ? 'light' : 'dark'} mode`} title={`Switch to ${darkMode ? 'light' : 'dark'} mode`}>{darkMode ? '☀' : '☾'}<span>{darkMode ? 'Light' : 'Dark'}</span></button><span className="avatar">V</span></div>
+          <div className="topbar-right"><span className="read-only-badge"><span/> READ ONLY</span><span className="identity-email" title={user.email}>{user.email}</span><button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${darkMode ? 'light' : 'dark'} mode`} title={`Switch to ${darkMode ? 'light' : 'dark'} mode`}>{darkMode ? '☀' : '☾'}<span>{darkMode ? 'Light' : 'Dark'}</span></button><button className="logout-button" onClick={logout}>Sign out</button><span className="avatar" title={user.email}>{(user.name[0] || 'U').toUpperCase()}</span></div>
         </header>
 
         <section className={`conversation ${hasConversation ? 'has-messages' : 'welcome-conversation'}`}>
@@ -240,7 +279,7 @@ export default function App() {
           </div> : <div className="message-list">
             {messages.map(message => message.role === 'user'
               ? <UserBubble key={message.id} message={message}/>
-              : <AssistantMessage key={message.id} message={message} onDownload={downloadCsv} onSummarize={summarize} onCopySql={copySql} copiedSql={copiedSqlId === message.id} summarizing={summarizingId === message.id} onSuggestion={suggestion => void sendQuestion(suggestion)} onRetry={retryQuestion => void sendQuestion(retryQuestion)} disabled={loading}/>) }
+              : <AssistantMessage key={message.id} message={message} onDownload={downloadCsv} onSummarize={summarize} onCopySql={copySql} copiedSql={copiedSqlId === message.id} onFeedback={submitFeedback} feedbackBusy={savingFeedbackId === message.id} summarizing={summarizingId === message.id} onSuggestion={suggestion => void sendQuestion(suggestion)} onRetry={retryQuestion => void sendQuestion(retryQuestion)} disabled={loading}/>) }
             {loading && <div className="assistant-row"><span className="assistant-avatar">✳</span><div className="thinking-bubble"><span className="spinner"/> Checking the schema and preparing a validated query…</div></div>}
             <div ref={endRef}/>
           </div>}
@@ -250,8 +289,8 @@ export default function App() {
         <footer className="composer-area">
           <form className="query-box" onSubmit={event => void sendQuestion(question, event)}>
             <span className="input-icon">⌕</span>
-            <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={hasConversation ? 'Ask a follow-up…' : 'Ask a question about your data…'} aria-label="Ask a question about your data" disabled={!activeChatId}/>
-            <button className="ask-button" disabled={loading || !question.trim() || !activeChatId}>{loading ? <><span className="spinner"/> Thinking</> : <>Send <span>↗</span></>}</button>
+            <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={hasConversation ? 'Ask a follow-up…' : 'Ask a question about your data…'} aria-label="Ask a question about your data" disabled={loading}/>
+            <button className="ask-button" disabled={loading || !question.trim()}>{loading ? <><span className="spinner"/> Thinking</> : <>Send <span>↗</span></>}</button>
           </form>
           <div className="composer-hint">Answers are grounded in your schema and validated before execution.</div>
         </footer>
@@ -265,13 +304,15 @@ function UserBubble({ message }: { message: ChatMessage }) {
 }
 
 function AssistantMessage({
-  message, onDownload, onSummarize, onCopySql, copiedSql, summarizing, onSuggestion, onRetry, disabled,
+  message, onDownload, onSummarize, onCopySql, copiedSql, onFeedback, feedbackBusy, summarizing, onSuggestion, onRetry, disabled,
 }: {
   message: ChatMessage
   onDownload: (message: ChatMessage) => void
   onSummarize: (message: ChatMessage) => void
   onCopySql: (message: ChatMessage) => void
   copiedSql: boolean
+  onFeedback: (message: ChatMessage, rating: 'up' | 'down', comment?: string) => Promise<boolean>
+  feedbackBusy: boolean
   summarizing: boolean
   onSuggestion: (suggestion: string) => void
   onRetry: (question: string) => void
@@ -279,6 +320,15 @@ function AssistantMessage({
 }) {
   const result = message.payload ?? {} as QueryResult
   const complete = result.status === 'complete'
+  const [feedbackComment, setFeedbackComment] = useState(message.feedback?.comment ?? '')
+  const [showFeedbackForm, setShowFeedbackForm] = useState(false)
+
+  async function sendDownvote(event: FormEvent) {
+    event.preventDefault()
+    if (!feedbackComment.trim()) return
+    if (await onFeedback(message, 'down', feedbackComment.trim())) setShowFeedbackForm(false)
+  }
+
   return <div className="assistant-row">
     <span className="assistant-avatar">✳</span>
     <article className="assistant-content">
@@ -299,6 +349,16 @@ function AssistantMessage({
         {result.status === 'error' && result.question && <button className="retry-button" onClick={() => onRetry(result.question!)} disabled={disabled}>↻ Try again</button>}
         {!!result.suggestions?.length && <div className="clarification-options">{result.suggestions.map((suggestion, index) => <button key={`${suggestion}-${index}`} onClick={() => onSuggestion(suggestion)} disabled={disabled}>{suggestion}<span>↗</span></button>)}</div>}
       </>}
+      <div className="message-feedback">
+        <span>{message.feedback ? 'Thanks for your feedback' : 'Was this helpful?'}</span>
+        <button className={message.feedback?.rating === 'up' ? 'selected' : ''} aria-label="Helpful" title="Helpful" disabled={feedbackBusy} onClick={() => void onFeedback(message, 'up')}>👍</button>
+        <button className={message.feedback?.rating === 'down' ? 'selected' : ''} aria-label="Not helpful" title="Not helpful" disabled={feedbackBusy} onClick={() => { setFeedbackComment(message.feedback?.comment ?? ''); setShowFeedbackForm(true) }}>👎</button>
+      </div>
+      {showFeedbackForm && <form className="feedback-form" onSubmit={event => void sendDownvote(event)}>
+        <label htmlFor={`feedback-${message.id}`}>What could be improved?</label>
+        <textarea id={`feedback-${message.id}`} value={feedbackComment} onChange={event => setFeedbackComment(event.target.value)} maxLength={2000} rows={2} required />
+        <div><button type="button" className="feedback-cancel" onClick={() => setShowFeedbackForm(false)}>Cancel</button><button type="submit" className="feedback-submit" disabled={!feedbackComment.trim() || feedbackBusy}>{feedbackBusy ? 'Saving…' : 'Send feedback'}</button></div>
+      </form>}
       <div className="assistant-footnote">Generated SQL is schema-grounded and read-only.</div>
     </article>
   </div>

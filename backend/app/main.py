@@ -1,10 +1,11 @@
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 
 from .chat_store import ChatStore
+from .auth import AuthenticatedUser, get_current_user
 from .config import get_settings
 from .llm import get_chat_model
 from .models import (
@@ -13,6 +14,8 @@ from .models import (
     ChatMessage,
     ChatSummary,
     ChatTurnResponse,
+    FeedbackRequest,
+    MessageFeedback,
     QueryRequest,
     QueryResponse,
     SummarizeRequest,
@@ -28,7 +31,7 @@ app.add_middleware(
     allow_origins=["http://localhost:5173"],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 try:
@@ -44,9 +47,11 @@ else:
     startup_error = ""
 
 try:
-    chat_store = ChatStore(settings.chat_store_path)
+    app_engine = create_engine(settings.app_database_url, pool_pre_ping=True)
+    chat_store = ChatStore(app_engine)
     chat_store_error = ""
 except Exception as exc:
+    app_engine = None
     chat_store = None
     chat_store_error = str(exc)
 
@@ -104,43 +109,54 @@ def health():
 
 
 @app.post("/api/query", response_model=QueryResponse)
-def query(request: QueryRequest):
+def query(request: QueryRequest, _user: AuthenticatedUser = Depends(get_current_user)):
     result = _require_pipeline().run(request.question)
     return _response_from_state(result)
 
 
 @app.get("/api/chats", response_model=list[ChatSummary])
-def list_chats():
-    return _require_store().list_chats()
+def list_chats(user: AuthenticatedUser = Depends(get_current_user)):
+    return _require_store().list_chats(user["user_id"])
 
 
 @app.post("/api/chats", response_model=ChatSummary)
-def create_chat(request: ChatCreateRequest):
-    return _require_store().create_chat(request.title)
+def create_chat(request: ChatCreateRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    return _require_store().create_chat(user["user_id"], request.title)
 
 
 @app.get("/api/chats/{chat_id}", response_model=ChatDetail)
-def get_chat(chat_id: str):
+def get_chat(chat_id: str, user: AuthenticatedUser = Depends(get_current_user)):
     store = _require_store()
-    chat = store.get_chat(chat_id)
+    chat = store.get_chat(chat_id, user["user_id"])
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found.")
-    return ChatDetail(chat=ChatSummary(**chat), messages=[ChatMessage(**m) for m in store.list_messages(chat_id)])
+    return ChatDetail(
+        chat=ChatSummary(**chat),
+        messages=[ChatMessage(**m) for m in store.list_messages(chat_id, user["user_id"])],
+    )
 
 
 @app.post("/api/chats/{chat_id}/query", response_model=ChatTurnResponse)
-def query_in_chat(chat_id: str, request: QueryRequest):
+def query_in_chat(
+    chat_id: str,
+    request: QueryRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
     store = _require_store()
-    if not store.get_chat(chat_id):
+    user_id = user["user_id"]
+    if not store.get_chat(chat_id, user_id):
         raise HTTPException(status_code=404, detail="Chat not found.")
-    history = store.list_messages(chat_id)
-    user_message = store.add_message(chat_id, "user", request.question)
+    history = store.list_messages(chat_id, user_id)
+    # Commit the user's turn before calling the model or analytics database.
+    # A downstream outage therefore cannot erase the submitted question.
+    user_message = store.add_message(chat_id, user_id, "user", request.question)
     try:
         result = _response_from_state(_require_pipeline().run(request.question, history=history))
     except Exception as exc:
         result = QueryResponse(status="error", message=f"Could not process this message: {exc}")
     assistant_message = store.add_message(
         chat_id,
+        user_id,
         "assistant",
         _assistant_content(result),
         {"question": request.question, **result.model_dump()},
@@ -153,7 +169,7 @@ def query_in_chat(chat_id: str, request: QueryRequest):
 
 
 @app.post("/api/summarize", response_model=SummarizeResponse)
-def summarize(request: SummarizeRequest):
+def summarize(request: SummarizeRequest, _user: AuthenticatedUser = Depends(get_current_user)):
     try:
         return SummarizeResponse(summary=_summarize(request.question, request.sql, request.columns, request.rows))
     except Exception as exc:
@@ -161,11 +177,16 @@ def summarize(request: SummarizeRequest):
 
 
 @app.post("/api/chats/{chat_id}/messages/{message_id}/summarize", response_model=SummarizeResponse)
-def summarize_chat_message(chat_id: str, message_id: str):
+def summarize_chat_message(
+    chat_id: str,
+    message_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
     store = _require_store()
-    if not store.get_chat(chat_id):
+    user_id = user["user_id"]
+    if not store.get_chat(chat_id, user_id):
         raise HTTPException(status_code=404, detail="Chat not found.")
-    message = next((m for m in store.list_messages(chat_id) if m["id"] == message_id), None)
+    message = next((m for m in store.list_messages(chat_id, user_id) if m["id"] == message_id), None)
     if not message or message["role"] != "assistant":
         raise HTTPException(status_code=404, detail="Assistant result not found.")
     payload = message.get("payload", {})
@@ -178,7 +199,30 @@ def summarize_chat_message(chat_id: str, message_id: str):
             payload.get("columns", []),
             payload.get("rows", []),
         )
-        store.update_message_payload(chat_id, message_id, {"summary": summary})
+        store.update_message_payload(chat_id, user_id, message_id, {"summary": summary})
         return SummarizeResponse(summary=summary)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Summary generation failed: {exc}") from exc
+
+
+@app.post(
+    "/api/chats/{chat_id}/messages/{message_id}/feedback",
+    response_model=MessageFeedback,
+)
+def submit_message_feedback(
+    chat_id: str,
+    message_id: str,
+    request: FeedbackRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    store = _require_store()
+    saved = store.save_feedback(
+        chat_id,
+        user["user_id"],
+        message_id,
+        request.rating,
+        request.comment,
+    )
+    if not saved:
+        raise HTTPException(status_code=404, detail="Assistant message not found.")
+    return saved

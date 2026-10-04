@@ -98,3 +98,43 @@ html,body,#root{height:100%;min-height:100%;overflow:hidden}.chat-layout{height:
 .dark .sql-identifier{color:#c6d0ed}
 .dark .sql-operator{color:#a0aaba}
 .dark .sql-comment{color:#8993a2}
+.user-message{font-size:16px;line-height:1.6}
+.assistant-intro strong{font-size:16px}
+.assistant-text{font-size:16px;line-height:1.7}
+.interpreted-question{font-size:14px}
+.assistant-content .table-toolbar strong{font-size:15px}
+.assistant-content th{font-size:12px;padding:11px 14px}
+.assistant-content td{font-size:15px;padding:12px 14px}
+.assistant-content .empty-state{font-size:15px}
+.assistant-content .empty-state strong{font-size:16px}
+.assistant-content .empty-state p{font-size:14px}
+@media(max-width:560px){.user-message{font-size:15px}.assistant-intro strong{font-size:15px}.assistant-text{font-size:15px}.assistant-content th{font-size:11px;padding:9px 11px}.assistant-content td{font-size:14px;padding:10px 11px}}
+.identity-email{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#727a87;font-size:10px}
+.logout-button{height:29px;border:1px solid #e4e7ec;border-radius:7px;background:#fff;color:#636b78;padding:0 9px;font:500 10px 'DM Sans',sans-serif;cursor:pointer}
+.logout-button:hover{border-color:#c7cde0;background:#fafbff}
+.auth-start-error{max-width:560px;margin:15vh auto;padding:22px;border:1px solid #f1ddda;border-radius:12px;background:#fff7f6;color:#8b514b;font:14px/1.6 'DM Sans',sans-serif}
+.message-feedback{display:flex;align-items:center;gap:7px;margin:12px 0 0;color:#959ca8;font-size:10px}
+.message-feedback button{width:27px;height:26px;border:1px solid transparent;border-radius:6px;background:transparent;color:#828a97;font-size:13px;cursor:pointer}
+.message-feedback button:hover,.message-feedback button.selected{background:#f0f2f8;border-color:#e2e6f0;color:#5267c9}
+.message-feedback button:disabled{cursor:wait}
+.feedback-form{margin-top:8px;max-width:440px;padding:11px;border:1px solid #e5e8ed;border-radius:9px;background:#fff}
+.feedback-form label{display:block;margin-bottom:7px;color:#5a626f;font-size:11px;font-weight:600}
+.feedback-form textarea{display:block;width:100%;resize:vertical;min-height:54px;border:1px solid #dfe3e9;border-radius:6px;padding:8px;color:#333b47;background:#fff;font:12px/1.5 'DM Sans',sans-serif;outline:none}
+.feedback-form textarea:focus{border-color:#8293e7;box-shadow:0 0 0 2px #526be01a}
+.feedback-form>div{display:flex;justify-content:flex-end;gap:7px;margin-top:8px}
+.feedback-form button{height:29px;padding:0 9px;border-radius:6px;font:500 10px 'DM Sans',sans-serif;cursor:pointer}
+.feedback-cancel{border:1px solid #e2e5eb;background:#fff;color:#626b78}
+.feedback-submit{border:1px solid #4664e7;background:#4664e7;color:#fff}
+.feedback-submit:disabled{opacity:.5;cursor:not-allowed}
+.dark .identity-email{color:#a0a8b5}
+.dark .logout-button{background:#20242c;border-color:#343946;color:#d1d5df}
+.dark .logout-button:hover{background:#292e38;border-color:#485165}
+.dark .auth-start-error{background:#30211f;border-color:#593a36;color:#e0aaa2}
+.dark .message-feedback{color:#8e97a6}
+.dark .message-feedback button{color:#9da5b3}
+.dark .message-feedback button:hover,.dark .message-feedback button.selected{background:#29324f;border-color:#3b4667;color:#b5c0ff}
+.dark .feedback-form{background:#191d24;border-color:#343a45}
+.dark .feedback-form label{color:#d1d6df}
+.dark .feedback-form textarea{background:#14171d;border-color:#3a404b;color:#e0e4ec}
+.dark .feedback-cancel{background:#20242c;border-color:#3b414e;color:#c5cad4}
+@media(max-width:560px){.identity-email{display:none}.logout-button{height:27px;padding:0 6px;font-size:9px}}

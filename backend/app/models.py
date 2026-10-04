@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, Literal
+from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class QueryRequest(BaseModel):
@@ -27,18 +28,37 @@ class ChatCreateRequest(BaseModel):
 
 class ChatSummary(BaseModel):
     id: str
+    user_id: str
     title: str
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MessageFeedback(BaseModel):
+    rating: Literal["up", "down"]
+    comment: str | None = None
 
 
 class ChatMessage(BaseModel):
     id: str
     chat_id: str
+    user_id: str
     role: str
     content: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    created_at: str
+    created_at: datetime
+    feedback: MessageFeedback | None = None
+
+
+class FeedbackRequest(BaseModel):
+    rating: Literal["up", "down"]
+    comment: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_downvote_comment(self):
+        if self.rating == "down" and not (self.comment and self.comment.strip()):
+            raise ValueError("Please add a short comment explaining your feedback.")
+        return self
 
 
 class ChatDetail(BaseModel):

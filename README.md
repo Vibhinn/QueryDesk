@@ -14,22 +14,26 @@ A local NL2SQL demo built around `SCHEMA.md`. It uses a FastAPI API, a LangGraph
 8. Execute in a read-only transaction with a statement timeout.
 9. Render the result as a table. CSV download is created in the browser; **Summarize** calls the model only when clicked.
 
-## Chat behavior
+## Accounts, conversations, and feedback
 
-The sidebar stores separate conversations. Each user turn and assistant response is appended and saved in a SQLite chat-history database, mounted at `/app/data` in Docker so it survives API container restarts. Each request receives only that conversation's recent messages as context, allowing follow-ups such as “show me only from California” to refine an earlier request. When the schema cannot represent the requested filter or the intent is unclear, the assistant asks a follow-up and offers suggested answers; SQL generation and execution wait until the request is sufficiently clear. Choosing a suggestion adds it as a new turn in the same conversation.
+The React app signs users in through Keycloak using the OIDC Authorization Code flow with PKCE. The development realm allows self-registration using an email address and password; email is the username. This is not passwordless email-only login. Email verification and password reset are disabled in the local realm because no SMTP server is configured; set up SMTP and enable those flows before production. The API verifies each bearer access token and derives the user's ID from its signed `sub` claim. It never trusts a user ID sent by the browser. Chat list, history, summary, and feedback endpoints enforce conversation ownership using that identity.
+
+Conversation data is stored in a PostgreSQL application database, separate from the analytics database. It has three tables: `conversation`, `messages`, and `feedback`; all include the Keycloak user ID. The API commits a submitted user message before calling the LLM or analytics database, so a downstream model/database outage does not discard the accepted question. Feedback is attached to assistant messages; downvotes require a comment. These service credentials and Keycloak's admin credentials in `.env.example` are local-development examples only. Set strong private values before exposing any service beyond localhost.
+
+Recent messages in the selected conversation are passed as context for follow-up questions. If the schema cannot represent a request or its intent is unclear, the assistant asks a follow-up and offers suggestions; SQL generation and execution wait until the request is sufficiently clear. Choosing a suggestion adds it as a new turn in that conversation.
 
 The model's semantic check is a guardrail, not a mathematical proof. SQLGlot checks syntax and AST properties. PostgreSQL `EXPLAIN` checks the query against the live database before execution.
 
 ## Run locally
 
-1. Copy `.env.example` to `.env`, then set `GOOGLE_API_KEY` to your Gemini API key.
-2. Start PostgreSQL and the API for a hosted model:
+1. Copy `.env.example` to `.env`, set `GOOGLE_API_KEY` to your Gemini API key, and replace all local-development passwords with private values.
+2. Start the services:
 
    ```sh
    docker compose up --build
    ```
 
-   On a fresh database volume, this creates the example commerce tables and seeds 12 customers, 15 orders, and 15 order items. The API listens on `http://localhost:8000`.
+   On fresh volumes, this creates the sample analytics schema/data and starts the application database plus Keycloak. The API listens on `http://localhost:8000`; Keycloak is at `http://localhost:8081` and its admin console is available there. The development admin credentials come from `KEYCLOAK_ADMIN_USERNAME` and `KEYCLOAK_ADMIN_PASSWORD` in `.env`.
 3. Start the web client in another terminal:
 
    ```sh
@@ -38,7 +42,15 @@ The model's semantic check is a guardrail, not a mathematical proof. SQLGlot che
    npm run dev
    ```
 
-   Open `http://localhost:5173`.
+   Open `http://localhost:5173`. Keycloak redirects you to sign in; use **Register** to create an account with email and password if needed. The imported `querydesk` realm and `querydesk-web` client are configured for this local URL.
+
+The compose stack exposes the analytics database on port `5432` and the application database on port `5433`. Keycloak uses its own separate PostgreSQL database, which is not exposed on the host. Application tables are created automatically when the API starts. Do not use the example credentials outside local development.
+
+The API requires the `sub` user identifier in access tokens. The `querydesk-api-audience` client scope includes a **Subject (sub)** mapper that adds it to regular and lightweight access tokens. If Keycloak was initialized before this mapper was added, realm import will not update the existing realm: in the admin console, open **Client scopes** → `querydesk-api-audience` → **Mappers** → **Add mapper** → **By configuration** → **Subject (sub)**. Enable **Add to access token** and, if shown, **Add to lightweight access token**, then save. Keep the existing realm and database; do not delete the Keycloak volume. Sign out and sign in again to receive a token with `sub`.
+
+For a Vite host setup, the Keycloak URL, realm, client ID, and API URL default to the values above. Override them in `frontend/.env.local` if needed. If running FastAPI directly on the host instead of in Compose, set `KEYCLOAK_JWKS_URL=http://localhost:8081/realms/querydesk/protocol/openid-connect/certs` in the backend environment; the Compose default uses the internal Docker hostname.
+
+Existing chats stored by the earlier SQLite version are retained in the old Docker volume if it exists, but are not automatically imported: those rows have no authenticated owner. The PostgreSQL application database starts a new user-scoped history.
 
 The database uses a read-only transaction for both `EXPLAIN` and query execution. The configured row cap defaults to 500 and the statement timeout defaults to 8 seconds. For a real deployment, use a dedicated database role with only `SELECT` privileges as an additional boundary.
 

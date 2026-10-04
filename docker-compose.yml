@@ -11,25 +11,84 @@ services:
       - nl2sql_data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
       - ./db/sample_data.sql:/docker-entrypoint-initdb.d/002-sample-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nl2sql -d nl2sql_demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  app-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: querydesk_app
+      POSTGRES_USER: querydesk
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:-querydesk-dev-only}
+    ports:
+      - "5433:5432"
+    volumes:
+      - querydesk_app_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U querydesk -d querydesk_app"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  auth-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev-only}
+    volumes:
+      - keycloak_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0
+    command: ["start-dev", "--import-realm"]
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://auth-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak-dev-only}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin-dev-only}
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: http://localhost:8081
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak/querydesk-realm.json:/opt/keycloak/data/import/querydesk-realm.json:ro
   api:
     build: ./backend
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      app-db:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://nl2sql:nl2sql@db:5432/nl2sql_demo
+      APP_DATABASE_URL: postgresql+psycopg://querydesk:${APP_DB_PASSWORD:-querydesk-dev-only}@app-db:5432/querydesk_app
       SCHEMA_PATH: /schemas/SCHEMA.md
       MODEL_PROVIDER: ${MODEL_PROVIDER:-google_genai}
       MODEL_NAME: ${MODEL_NAME:-gemini-3.8-flash}
       MODEL_API_KEY: ${MODEL_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       MODEL_BASE_URL: ${MODEL_BASE_URL:-}
-      CHAT_STORE_PATH: /app/data/chat_history.sqlite3
+      KEYCLOAK_ISSUER: http://localhost:8081/realms/querydesk
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/realms/querydesk/protocol/openid-connect/certs
+      KEYCLOAK_AUDIENCE: querydesk-api
     volumes:
       - ./SCHEMA.md:/schemas/SCHEMA.md:ro
-      - nl2sql_chat_data:/app/data
     ports:
       - "8000:8000"
 
 volumes:
   nl2sql_data:
-  nl2sql_chat_data:
+  querydesk_app_data:
+  keycloak_data:
