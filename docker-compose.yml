@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nl2sql_demo
+      POSTGRES_USER: nl2sql
+      POSTGRES_PASSWORD: nl2sql
+    ports:
+      - "5432:5432"
+    volumes:
+      - nl2sql_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./db/sample_data.sql:/docker-entrypoint-initdb.d/002-sample-data.sql:ro
+  api:
+    build: ./backend
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql+psycopg://nl2sql:nl2sql@db:5432/nl2sql_demo
+      SCHEMA_PATH: /schemas/SCHEMA.md
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-google_genai}
+      MODEL_NAME: ${MODEL_NAME:-gemini-3.8-flash}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
+      CHAT_STORE_PATH: /app/data/chat_history.sqlite3
+    volumes:
+      - ./SCHEMA.md:/schemas/SCHEMA.md:ro
+      - nl2sql_chat_data:/app/data
+    ports:
+      - "8000:8000"
+
+volumes:
+  nl2sql_data:
+  nl2sql_chat_data:
