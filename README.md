@@ -40,11 +40,13 @@ You’ll need Docker Compose and a model API key. Gemini is the default provider
 
 Open the app and enter an email address. To stop the services, run `docker compose down`; this keeps the database volumes and saved chats.
 
-The current sign-in is deliberately simple: an email identifies a chat space, and the API keeps short-lived bearer sessions in memory. It is not proof of identity—anyone who enters someone else’s email can see that email’s chats. Use it only for a trusted demo with non-sensitive data. After an API restart, sign in again with the same email to recover the same saved chats.
+## How to sign in
+
+The current sign-in is deliberately simple: simply add ANY EMAIL ID and you'll be signed in. Note that it only for a trusted demo with non-sensitive data. You sign in again with the same email to recover the same saved chats.
 
 ### Using a different model or host
 
-The model connection is configured on the server. Gemini is the default (`MODEL_PROVIDER=google_genai`), using `GOOGLE_API_KEY`. For an OpenAI-compatible local service, configure it like this instead:
+The model connection is configured on the server. Gemini is the default (`MODEL_PROVIDER=google_genai`), using `GOOGLE_API_KEY`. For an OpenAI-compatible local service, we can configure it like this:
 
 ```env
 MODEL_PROVIDER=openai-compatible
@@ -52,8 +54,6 @@ MODEL_NAME=system
 MODEL_BASE_URL=http://host.docker.internal:1976/v1
 MODEL_API_KEY=
 ```
-
-Use the model ID your local service expects. From inside Docker, `127.0.0.1` points back to the API container, so use the host name your platform provides (for example, `host.docker.internal` on Docker Desktop). Keys and model settings stay on the server and are not sent to the browser.
 
 ### Using another database schema
 
@@ -112,11 +112,3 @@ flowchart TD
 ```
 
 The graph’s nodes and branches are explained in [Architecture and workflow](docs/architecture.md). Prompt wording is documented in [Prompts](docs/prompts.md).
-
-## A few important limits
-
-Schema retrieval is lexical: it scores table names, column names, and words in each table description, then includes the strongest matches. This keeps large schemas from being sent wholesale to the model, but a well-written `SCHEMA.md` still matters. It should explain table grain, relationships, business terms, and data caveats. The reader does not inspect the live database to discover those rules.
-
-SQLGlot checks that the result is a single read-only query and only refers to documented tables. A separate model call checks whether the query appears to answer the request. That semantic check is a useful guardrail, not a proof. Before execution, the app adds a result cap, asks PostgreSQL to `EXPLAIN` the query, and then runs it in a read-only transaction with a statement timeout.
-
-The query result limit defaults to 500 rows and the statement timeout to 8 seconds. For a deployment with real data, use a database role with only `SELECT` privileges, enable HTTPS, and replace the demo sign-in.
